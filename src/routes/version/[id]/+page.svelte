@@ -1,19 +1,27 @@
 <script>
+  import { browser } from '$app/environment';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
+  import { getUserProfile } from '$lib/utils/user';
   
   let versionId = null;
   let version = null;
   let notFound = false;
+  let username = '作者';
   
   // 从 URL 获取 id 参数
   $: versionId = $page.params.id;
   
   onMount(() => {
+    if (!browser) return;
+
+    const profile = getUserProfile();
+    username = profile.username;
+
     const saved = localStorage.getItem('jixin_versions');
     if (saved) {
       const versions = JSON.parse(saved);
-      version = versions.find(v => v.id.toString() === versionId.toString());
+      version = versions.find((v) => v.id.toString() === versionId.toString());
       if (!version) {
         notFound = true;
       }
@@ -35,7 +43,7 @@
   }
 </script>
 
-<main class="version-detail">
+<main class="version-detail" class:private={version && version.isHidden}>
   {#if notFound}
     <div class="error-state">
       <h1>版本未找到</h1>
@@ -43,11 +51,24 @@
       <a href="/write" class="btn-primary">返回写作页</a>
     </div>
   {:else if version}
-    <header class="version-header">
+    <header class="version-header" class:private={version.isHidden}>
       <div class="breadcrumb">
         <a href="/">首页</a> / <a href="/write">写作</a> / <span>版本详情</span>
       </div>
-      <h1>{version.title}</h1>
+      {#if version.isHidden || version.isGloballyPinned}
+        <div class="detail-badges">
+          {#if version.isHidden}<span class="privacy-badge">🔒 私密</span>{/if}
+          {#if version.isGloballyPinned}<span class="pin-badge">📌 代表作</span>{/if}
+        </div>
+      {/if}
+      <h1>{version.title || '无标题'}</h1>
+      <div class="author-line">
+        {#if version.authorIdentity === 'anonymous'}
+          <span class="anonymous-author">🎭 匿名作者</span>
+        {:else}
+          <span class="real-author">👤 {username}</span>
+        {/if}
+      </div>
       <div class="meta">
         <span class="time">🕐 {version.savedAt}</span>
         <span class="word-count">📝 {version.content.length} 字</span>
@@ -151,6 +172,27 @@
     padding-bottom: 1.5rem;
     border-bottom: 2px solid #eee;
   }
+
+  .detail-badges { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .privacy-badge { font-size: 0.75rem; color: #666; background: #e0e0e0; padding: 0.2rem 0.5rem; border-radius: 0.25rem; }
+  .pin-badge { font-size: 0.75rem; color: #333; background: #f0e68c; padding: 0.2rem 0.5rem; border-radius: 0.25rem; }
+
+  .author-line {
+    margin-bottom: 0.5rem;
+  }
+
+  .anonymous-author {
+    color: #4338ca;
+    background: #e0e7ff;
+    padding: 0.2rem 0.6rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+  }
+
+  .real-author {
+    color: #666;
+    font-size: 0.875rem;
+  }
   
   .version-header h1 {
     font-size: 2rem;
@@ -177,6 +219,11 @@
     font-size: 1.125rem;
     white-space: pre-wrap;
     border-left: 4px solid #333;
+  }
+
+  .version-detail.private .content-box {
+    border-left-color: #999;
+    background: #f5f5f5;
   }
   
   .conversation-section h2 {

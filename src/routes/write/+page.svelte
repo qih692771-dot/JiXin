@@ -1,7 +1,12 @@
 <script>
   import { browser } from '$app/environment';
+  import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  
+  import HideManagerModal from '$lib/components/HideManagerModal.svelte';
+  import AnonymousModal from '$lib/components/AnonymousModal.svelte';
+  import { getUserProfile } from '$lib/utils/user.ts';
+  import { canMakeAnonymous, getRemainingAnonymousQuota, MAX_ANONYMOUS_QUOTA } from '$lib/utils/anonymity.ts';
+
   let loaded = false;
   let title = '';
   let content = '';
@@ -10,15 +15,24 @@
   let collections = [];
   
   let showCollectionModal = false;
+  let showHideModal = false;
+  let showAnonymousModal = false;
   let activeVersionId = null;
   let newCollectionName = '';
+  let pendingVersion = null;
+  let userProfile = null;
   
   onMount(() => {
     if (browser) {
       try {
+        userProfile = getUserProfile();
+
         const saved = localStorage.getItem('jixin_versions');
         const savedCollections = localStorage.getItem('jixin_collections');
-        if (saved) versions = JSON.parse(saved);
+        if (saved) {
+          versions = JSON.parse(saved);
+          versions = versions.map(normalizeVersion);
+        }
         if (savedCollections) collections = JSON.parse(savedCollections);
       } catch (e) {
         console.warn('localStorage 解析失败', e);
@@ -42,6 +56,18 @@
   let activeResponseQuestion = null;
   let responseContent = '';
   
+  /** 为旧数据补全第4稿分水岭相关字段（index 0 = 最新 = 第1稿） */
+  function normalizeVersion(v, index) {
+    const draftNumber = index + 1;
+    return {
+      ...v,
+      isGloballyPinned: v.isGloballyPinned ?? false,
+      visibility: v.visibility ?? 'public',
+      isHidden: v.isHidden ?? false,
+      authorIdentity: v.authorIdentity ?? (draftNumber >= 4 ? 'real' : 'real')
+    };
+  }
+
   const questionTypes = [
     { id: 'expand', label: '请求展开', placeholder: '你提到的...能具体说说吗？' },
     { id: 'contradict', label: '指出矛盾', placeholder: '这里似乎与...有矛盾，你怎么看？' },
@@ -64,13 +90,76 @@
       tags: tagList,
       collectionId: null,
       savedAt: new Date().toLocaleString('zh-CN'),
-      questions: []
+      questions: [],
+      isGloballyPinned: false,
+      visibility: 'public',
+      isHidden: false,
+      authorIdentity: 'real'
     };
     
-    versions = [newVersion, ...versions];
+    // 所有稿件统一通过身份选择弹窗处理（实名 / 匿名）
+    pendingVersion = newVersion;
+    showAnonymousModal = true;
+  }
+
+  function finalizeSave(version) {
+    versions = [version, ...versions];
     title = '';
     content = '';
     tags = '';
+
+    // 第4稿起触发隐藏管理弹窗
+    if (versions.length >= 4) {
+      showHideModal = true;
+    } else {
+      alert('发布成功！');
+      goto('/profile');
+    }
+  }
+
+  function handleAnonymousConfirm(identity) {
+    if (!pendingVersion) {
+      showAnonymousModal = false;
+      return;
+    }
+
+    // 选择匿名时检查全局匿名配额
+    if (identity === 'anonymous') {
+      const remaining = getRemainingAnonymousQuota(versions);
+      if (!canMakeAnonymous(versions)) {
+        alert(`匿名名额已满（${MAX_ANONYMOUS_QUOTA}/${MAX_ANONYMOUS_QUOTA}），请先解除其他匿名作品`);
+        // 不关闭弹窗，允许用户重新选择或取消
+        return;
+      }
+      pendingVersion.authorIdentity = 'anonymous';
+      pendingVersion.visibility = 'anonymous';
+    } else {
+      pendingVersion.authorIdentity = 'real';
+      pendingVersion.visibility = 'public';
+    }
+
+    finalizeSave(pendingVersion);
+    showAnonymousModal = false;
+    pendingVersion = null;
+  }
+
+  function handleHideSave(hiddenIds) {
+    // 1. 更新内存中的版本数据
+    versions = versions.map((v) => ({
+      ...v,
+      isHidden: hiddenIds.includes(v.id)
+    }));
+
+    // 2. 保存到 localStorage（必须加 browser 判断）
+    if (browser) {
+      localStorage.setItem('jixin_versions', JSON.stringify(versions));
+      console.log('已保存隐藏状态:', versions.map((v) => ({ id: v.id, isHidden: v.isHidden })));
+    }
+
+    // 3. 关闭弹窗并跳转
+    showHideModal = false;
+    alert('发布成功！');
+    goto('/profile');
   }
   
   function openCollectionModal(versionId) {
@@ -198,7 +287,7 @@
 </script>
 
 <main class="write-container">
-  <h1>写下第1稿</h1>
+  <h1>写下第 {versions.length + 1} 稿</h1>
   
   <div class="editor">
     <input bind:value={title} placeholder="标题（不必完美）" class="title-input"/>
@@ -222,12 +311,19 @@
             </div>
             <div class="collection-versions">
               {#each ungrouped as version, index}
-                <div class="version-card">
+                <div class="version-card" class:private={version.isHidden}>
                   <div class="version-header">
                     <span class="version-num">第 {ungrouped.length - index} 稿</span>
                     <span>{version.savedAt}</span>
                   </div>
-                  <h3 class="version-title">{version.title}</h3>
+                  {#if version.isHidden || version.isGloballyPinned || version.authorIdentity === 'anonymous'}
+                    <div class="card-badges">
+                      {#if version.isHidden}<span class="privacy-badge">🔒 私密</span>{/if}
+                      {#if version.authorIdentity === 'anonymous'}<span class="anonymous-badge">🎭 匿名</span>{/if}
+                      {#if version.isGloballyPinned}<span class="pin-badge">📌 代表作</span>{/if}
+                    </div>
+                  {/if}
+                  <h3 class="version-title">{version.title || '无标题'}</h3>
                   {#if version.tags?.length > 0}
                     <div class="version-tags">
                       {#each version.tags as tag}<span class="tag">{tag}</span>{/each}
@@ -299,12 +395,19 @@
               </div>
               <div class="collection-versions">
                 {#each collectionVersions as version, index}
-                  <div class="version-card">
+                  <div class="version-card" class:private={version.isHidden}>
                     <div class="version-header">
                       <span class="version-num">第 {collectionVersions.length - index} 稿</span>
                       <span>{version.savedAt}</span>
                     </div>
-                    <h3 class="version-title">{version.title}</h3>
+                    {#if version.isHidden || version.isGloballyPinned || version.authorIdentity === 'anonymous'}
+                      <div class="card-badges">
+                        {#if version.isHidden}<span class="privacy-badge">🔒 私密</span>{/if}
+                        {#if version.authorIdentity === 'anonymous'}<span class="anonymous-badge">🎭 匿名</span>{/if}
+                        {#if version.isGloballyPinned}<span class="pin-badge">📌 代表作</span>{/if}
+                      </div>
+                    {/if}
+                    <h3 class="version-title">{version.title || '无标题'}</h3>
                     {#if version.tags?.length > 0}
                       <div class="version-tags">
                         {#each version.tags as tag}<span class="tag">{tag}</span>{/each}
@@ -393,7 +496,23 @@
       </div>
     </div>
   {/if}
-  
+
+  {#if showHideModal}
+    <HideManagerModal
+      versions={versions}
+      onConfirm={handleHideSave}
+      onClose={() => showHideModal = false}
+    />
+  {/if}
+
+  {#if showAnonymousModal}
+    <AnonymousModal
+      initialChoice="real"
+      onConfirm={handleAnonymousConfirm}
+      onClose={() => { showAnonymousModal = false; pendingVersion = null; }}
+    />
+  {/if}
+
   <div class="data-actions">
     <button on:click={exportData} class="btn-export">📥 导出备份</button>
     <button on:click={importData} class="btn-import">📤 导入备份</button>
@@ -444,6 +563,12 @@
   
   .version-header { display: flex; justify-content: space-between; margin-bottom: 0.5rem; color: #666; font-size: 0.875rem; }
   .version-num { font-weight: bold; color: #333; }
+  .card-badges { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .privacy-badge { font-size: 0.75rem; color: #666; background: #e0e0e0; padding: 0.2rem 0.5rem; border-radius: 0.25rem; }
+  .anonymous-badge { font-size: 0.75rem; color: #4338ca; background: #e0e7ff; padding: 0.2rem 0.5rem; border-radius: 0.25rem; margin-right: 0.5rem; }
+  .pin-badge { font-size: 0.75rem; color: #333; background: #f0e68c; padding: 0.2rem 0.5rem; border-radius: 0.25rem; }
+  .version-card.private { opacity: 0.9; background: #f5f5f5; border-left-color: #999; }
+  .collection-group.ungrouped .version-card.private { border-left-color: #999; }
   .version-title { margin: 0.5rem 0; font-size: 1.25rem; }
   
   .version-tags { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
