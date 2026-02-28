@@ -1,0 +1,55 @@
+name: Code Optimization Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-code:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Type Check
+        run: npx svelte-check --fail-on-warnings
+      
+      - name: Format Check
+        run: npx prettier --check "src/**/*.{js,ts,svelte}"
+      
+      - name: Lint Check
+        run: npx eslint src --ext .js,.ts,.svelte
+      
+      - name: Generate Report
+        if: failure()
+        run: |
+          echo "## 🔍 代码优化报告" > optimization-report.md
+          echo "" >> optimization-report.md
+          echo "### 发现的问题：" >> optimization-report.md
+          echo "- 类型错误：请检查TypeScript类型定义" >> optimization-report.md
+          echo "- 格式问题：运行 \`npx prettier --write .\` 自动修复" >> optimization-report.md
+          echo "- 代码质量：检查ESLint错误" >> optimization-report.md
+          echo "" >> optimization-report.md
+          echo "### 修复建议：" >> optimization-report.md
+          echo "1. 本地运行 \`npm run format\` 自动格式化" >> optimization-report.md
+          echo "2. 运行 \`npx svelte-check\` 查看类型错误详情" >> optimization-report.md
+      
+      - name: Upload Report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimization-report
+          path: optimization-report.md
+          retention-days: 5
