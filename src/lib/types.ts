@@ -39,3 +39,22 @@ export interface Version {
   /** 第1-3稿可选，第4稿+强制 'real' */
   authorIdentity: AuthorIdentity;
 }
+
+/**
+ * 合集数据结构
+ */
+export interface Collection {
+  id: number;
+  name: string;
+  createdAt: string;
+  pinnedVersionId: number | null;
+}
+
+/**
+ * 用户资料
+ */
+export interface UserProfile {
+  username: string;
+  bio?: string;
+  createdAt: string;
+}
