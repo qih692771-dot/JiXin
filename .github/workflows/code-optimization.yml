@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
-           - name: Type Check
+      - name: Type Check
         run: npx svelte-check
         continue-on-error: true
       
