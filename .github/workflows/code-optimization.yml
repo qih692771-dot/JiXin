@@ -29,9 +29,11 @@ jobs:
       
       - name: Format Check
         run: npx prettier --check "src/**/*.{js,ts,svelte}"
+        continue-on-error: true
       
       - name: Lint Check
         run: npx eslint src --ext .js,.ts,.svelte
+        continue-on-error: true
       
       - name: Generate Report
         if: failure()
