@@ -17,39 +17,53 @@
   // 本地修改状态（不直接修改versions，等确认后一次性提交）
   let pendingChanges = new Map<number, { authorIdentity?: 'real' | 'anonymous'; isHidden?: boolean }>(); // key: versionId
 
-  function toggleAnonymous(version: Version) {
-    const current = pendingChanges.get(version.id)?.authorIdentity ?? version.authorIdentity;
-    const next: 'real' | 'anonymous' = current === 'anonymous' ? 'real' : 'anonymous';
-    
-    if (next === 'anonymous' && remainingAnonymous <= 0 && current !== 'anonymous') {
-      alert('匿名名额已满（3/3），请先解除其他匿名作品');
-      return;
-    }
-    
-    pendingChanges.set(version.id, {
-      ...pendingChanges.get(version.id),
-      authorIdentity: next
-    });
-    pendingChanges = new Map(pendingChanges); // 触发响应式更新
+ function toggleAnonymous(version: Version) {
+  const current = pendingChanges.get(version.id)?.authorIdentity ?? version.authorIdentity;
+  const next: 'real' | 'anonymous' = current === 'anonymous' ? 'real' : 'anonymous';
+  
+  // 计算当前实际匿名数量（实时统计所有作品当前状态）
+  const currentAnonymousCount = versions.filter((v: any) => {
+    const change = pendingChanges.get(v.id);
+    const identity = change?.authorIdentity ?? v.authorIdentity;
+    return identity === 'anonymous';
+  }).length;
+  
+  // 如果是改为匿名，且改完会超过配额，则阻止
+  if (next === 'anonymous' && currentAnonymousCount >= MAX_ANONYMOUS_QUOTA) {
+    alert(`匿名名额已满（${currentAnonymousCount}/${MAX_ANONYMOUS_QUOTA}），请先解除其他匿名作品`);
+    return;
   }
+  
+  pendingChanges.set(version.id, {
+    ...pendingChanges.get(version.id),
+    authorIdentity: next
+  });
+  pendingChanges = new Map(pendingChanges);
+}
 
-  function toggleHidden(version: Version) {
-    const current = pendingChanges.get(version.id)?.isHidden ?? version.isHidden;
-    const next = !current;
-    
-    // 检查至少保留3篇可见
-    const willVisibleCount = visibleCount + (next ? -1 : 1); // 如果设为hidden，visible减1
-    if (next && willVisibleCount < 3) {
-      alert('至少需保留 3 篇作品对外可见');
-      return;
-    }
-    
-    pendingChanges.set(version.id, {
-      ...pendingChanges.get(version.id),
-      isHidden: next
-    });
-    pendingChanges = new Map(pendingChanges);
+function toggleHidden(version: Version) {
+  const current = pendingChanges.get(version.id)?.isHidden ?? version.isHidden;
+  const next = !current;
+  
+  // 计算当前实际可见数量（实时统计）
+  const currentVisibleCount = versions.filter((v: any) => {
+    const change = pendingChanges.get(v.id);
+    const hidden = change?.isHidden ?? v.isHidden;
+    return !hidden;
+  }).length;
+  
+  // 如果是改为私密（隐藏），且改完会少于3篇可见，则阻止
+  if (next && currentVisibleCount <= 3) {
+    alert(`至少需保留 3 篇作品对外可见（当前可见 ${currentVisibleCount}）`);
+    return;
   }
+  
+  pendingChanges.set(version.id, {
+    ...pendingChanges.get(version.id),
+    isHidden: next
+  });
+  pendingChanges = new Map(pendingChanges);
+}
 
   function getDisplayState(version: Version) {
     const change = pendingChanges.get(version.id);
@@ -88,11 +102,12 @@
     </div>
 
     <div class="version-list">
-      {#each versions as version, index}
-        {@const draftNum = versions.length - index}
-        {@const state = getDisplayState(version)}
-        {@const isAnonymous = state.authorIdentity === 'anonymous'}
-        {@const isHidden = state.isHidden}
+     {#each versions as version, index}
+  {@const draftNum = versions.length - index}
+  {@const pending = pendingChanges.get(version.id)}  <!-- ✅ 直接读取 Map，建立依赖 -->
+  {@const authorIdentity = pending?.authorIdentity ?? version.authorIdentity}
+  {@const isHidden = pending?.isHidden ?? version.isHidden}
+  {@const isAnonymous = authorIdentity === 'anonymous'} 
         
         <div class="version-row">
           <div class="version-info">
@@ -104,21 +119,21 @@
           </div>
           
           <div class="toggles">
-            <button 
-              class="toggle-btn anonymous {isAnonymous ? 'active' : ''}"
-              on:click={() => toggleAnonymous(version)}
-              title={isAnonymous ? '点击解除匿名' : '点击设为匿名'}
-            >
-              {isAnonymous ? '🎭 匿名中' : '👤 实名'}
-            </button>
-            
-            <button 
-              class="toggle-btn privacy {isHidden ? 'active' : ''}"
-              on:click={() => toggleHidden(version)}
-              title={isHidden ? '点击取消私密' : '点击设为私密'}
-            >
-              {isHidden ? '🔒 私密' : '👁️ 公开'}
-            </button>
+           <button 
+  class="toggle-btn anonymous {isAnonymous ? 'active' : ''}"
+  on:click={() => toggleAnonymous(version)}
+  title={isAnonymous ? '点击解除匿名' : '点击设为匿名'}
+>
+  {isAnonymous ? '🎭 匿名中' : '👤 实名'}
+</button>
+
+<button 
+  class="toggle-btn privacy {isHidden ? 'active' : ''}"
+  on:click={() => toggleHidden(version)}
+  title={isHidden ? '点击取消私密' : '点击设为私密'}
+>
+  {isHidden ? '🔒 私密' : '👁️ 公开'}
+</button> 
           </div>
         </div>
       {/each}
@@ -244,15 +259,18 @@
     border-color: #999;
   }
   .toggle-btn.anonymous.active {
-    background: #e0e7ff;
-    border-color: #4338ca;
-    color: #4338ca;
-  }
-  .toggle-btn.privacy.active {
-    background: #fee;
-    border-color: #dc2626;
-    color: #dc2626;
-  }
+  background: #8b5cf6;    /* 紫色实心 */
+  border-color: #8b5cf6;
+  color: #ffffff;         /* 白色文字 */
+  font-weight: 600;
+}
+
+.toggle-btn.privacy.active {
+  background: #ef4444;    /* 红色实心 */
+  border-color: #ef4444;
+  color: #ffffff;         /* 白色文字 */
+  font-weight: 600;
+}
   .actions {
     display: flex;
     gap: 0.5rem;
